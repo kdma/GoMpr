@@ -1,14 +1,12 @@
 package volume
 
 import (
-	"github.com/suyashkumar/dicom"
-	"github.com/suyashkumar/dicom/pkg/tag"
-	"github.com/ungerik/go3d/mat3"
-	"github.com/ungerik/go3d/mat4"
-	"github.com/ungerik/go3d/vec3"
-	"github.com/ungerik/go3d/vec4"
 	"math"
 	"strconv"
+
+	"github.com/g3n/engine/math32"
+	"github.com/suyashkumar/dicom"
+	"github.com/suyashkumar/dicom/pkg/tag"
 )
 
 type DcmData struct {
@@ -19,9 +17,9 @@ type DcmData struct {
 	Level       int
 	Slope       int
 	Intercept   int
-	Calibration mat4.T
-	Origin      vec3.T
-	VoxelSize   vec3.T
+	Calibration *math32.Matrix4
+	Origin      math32.Vector3
+	VoxelSize   math32.Vector3
 }
 
 func readPixelData(dcm dicom.Dataset, tag tag.Tag) (dicom.PixelDataInfo, error) {
@@ -41,29 +39,31 @@ func readTag(dcm dicom.Dataset, tag tag.Tag) (int, error) {
 	return strconv.Atoi(element.Value.GetValue().([]string)[0])
 }
 
-func readCal(dcm dicom.Dataset, tag tag.Tag) (mat3.T, []vec3.T, error) {
+func readCal(dcm dicom.Dataset, tag tag.Tag) (*math32.Matrix4, []math32.Vector3, error) {
 	element, err := dcm.FindElementByTag(tag)
 	if err != nil {
-		return mat3.Ident, []vec3.T{}, err
+		return math32.NewMatrix4(), []math32.Vector3{}, err
 	}
 	values := element.Value.GetValue().([]string)
-	dirx := vec3.T{readFloat(values[0]), readFloat(values[1]), readFloat(values[2])}
+	dirx := math32.Vector3{readFloat(values[0]), readFloat(values[1]), readFloat(values[2])}
 	dirx.Normalize()
-	diry := vec3.T{readFloat(values[3]), readFloat(values[4]), readFloat(values[5])}
+	diry := math32.Vector3{readFloat(values[3]), readFloat(values[4]), readFloat(values[5])}
 	diry.Normalize()
-	dirz := vec3.Cross(&dirx, &diry)
+	dirz := dirx.Cross(&diry)
 	dirz.Normalize()
-	return mat3.T{dirx, diry, dirz}, []vec3.T{dirx, diry, dirz}, nil
+
+	m := math32.NewMatrix4().MakeBasis(&dirx, &diry, dirz)
+	return m, []math32.Vector3{dirx, diry, *dirz}, nil
 }
 
-func readOrigin(dcm dicom.Dataset, tag tag.Tag) (vec3.T, error) {
+func readOrigin(dcm dicom.Dataset, tag tag.Tag) (math32.Vector3, error) {
 	element, err := dcm.FindElementByTag(tag)
 	if err != nil {
-		return vec3.Zero, err
+		return *math32.NewVector3(0, 0, 0), err
 	}
 	values := element.Value.GetValue().([]string)
-	dirx := vec3.T{readFloat(values[0]), readFloat(values[1]), readFloat(values[2])}
-	return dirx, nil
+	dirx := math32.NewVector3(readFloat(values[0]), readFloat(values[1]), readFloat(values[2]))
+	return *dirx, nil
 }
 func readFloat(num string) float32 {
 	f, err := strconv.ParseFloat(num, 32)
@@ -88,13 +88,14 @@ func readDcmData(dcm []DicomFile) DcmData {
 	rows, _ := readTagInt(dataset, tag.Rows)
 	cols, _ := readTagInt(dataset, tag.Columns)
 	slope, _ := readTag(dataset, tag.RescaleSlope)
-	orientation, dirs, _ := readCal(dataset, tag.ImageOrientationPatient)
+	orientation, _, _ := readCal(dataset, tag.ImageOrientationPatient)
 	intercept, _ := readTag(dataset, tag.RescaleIntercept)
 	origin, _ := readOrigin(dataset, tag.ImagePositionPatient)
-	dirz := orientation.MulVec3(&vec3.UnitZ)
-	voxelSize, _ := readVoxelSize(dataset, dcm[1].dataset, tag.PixelSpacing, origin, &*dirz.Normalize())
-	x := vec4.FromVec3(&voxelSize)
-	cal := mat4.Ident.SetScaling(&x).AssignCoordinateSystem(&dirs[0], &dirs[1], &dirs[2]).SetTranslation(&origin)
+	z := math32.NewVector3(0, 0, 1)
+	z.ApplyMatrix4(orientation)
+	z.Normalize()
+	voxelSize, _ := readVoxelSize(dcm[1].dataset, dcm[2].dataset, tag.PixelSpacing, origin, z)
+	cal := math32.NewMatrix4().Scale(voxelSize).Multiply(orientation).SetPosition(&origin)
 	return DcmData{rows,
 		cols,
 		len(dcm),
@@ -102,24 +103,23 @@ func readDcmData(dcm []DicomFile) DcmData {
 		level,
 		slope,
 		intercept,
-		*cal,
+		cal,
 		origin,
-		voxelSize}
+		*voxelSize}
 }
 
-func readVoxelSize(dcm dicom.Dataset, dcm2 dicom.Dataset, tg tag.Tag, origin vec3.T, dirZ *vec3.T) (vec3.T, error) {
+func toDegree(rad float32) float32 {
+	return rad * (180 / math.Pi)
+}
+func readVoxelSize(dcm dicom.Dataset, dcm2 dicom.Dataset, tg tag.Tag, origin math32.Vector3, dirZ *math32.Vector3) (*math32.Vector3, error) {
 	element, err := dcm.FindElementByTag(tg)
 	if err != nil {
-		return vec3.T{}, err
+		return math32.NewVector3(0, 0, 0), err
 	}
 	origin2, _ := readOrigin(dcm2, tag.ImagePositionPatient)
 	values := element.Value.GetValue().([]string)
-	dot1 := vec3.Dot(&origin, dirZ)
-	dot2 := vec3.Dot(&origin2, dirZ)
+	dot1 := origin.Dot(dirZ)
+	dot2 := origin2.Dot(dirZ)
 	dist := math.Abs(float64(dot2 - dot1))
-	return [3]float32{
-		readFloat(values[0]),
-		readFloat(values[1]),
-		float32(dist),
-	}, nil
+	return math32.NewVector3(readFloat(values[0]), readFloat(values[1]), float32(dist)), nil
 }

@@ -2,17 +2,17 @@ package volume
 
 import (
 	"fmt"
-	"github.com/suyashkumar/dicom"
-	"github.com/suyashkumar/dicom/pkg/tag"
-	"github.com/ungerik/go3d/mat4"
-	"github.com/ungerik/go3d/quaternion"
-	"github.com/ungerik/go3d/vec3"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+
+	"github.com/g3n/engine/math32"
+	"github.com/suyashkumar/dicom"
+	"github.com/suyashkumar/dicom/pkg/tag"
 )
 
 type DicomFile struct {
@@ -27,41 +27,12 @@ type Volume struct {
 	DcmData DcmData
 }
 
-func (v Volume) Cut() error {
-	Aabb := getCorners(v)
-	//center := vec3.T{float32(v.DcmData.Cols) * 0.5, float32(v.DcmData.Rows) * 0.5, float32(v.DcmData.Depth) * 0.5}
-
-	fromDataToSlicePlane := mat4.Ident.TranslateZ(2)
-	fromDataToSlicePlane.MultMatrix(&v.DcmData.Calibration)
-
-	zero := vec3.Zero
-	zeta := vec3.UnitZ
-	origin := fromDataToSlicePlane.MulVec3(&zero)
-	z := fromDataToSlicePlane.MulVec3(&zeta)
-	z.Normalize()
-	angle := vec3.Angle(&z, &zeta)
-	//vedi centro di rotazione
-	q := quaternion.FromZAxisAngle(angle)
-	frame := mat4.Ident.AssignQuaternion(&q)
-	frame.Translate(&origin)
-	sliceFrame, err := AABBIntersections(Aabb, *frame)
-	if err != nil {
-		return error(err)
-	}
-	box2f := AABBBox2(ToPlaneUVBatch(sliceFrame.AABB.CalibratedCorners, sliceFrame.Plane))
-	return nil
-}
-
-func RenderSlice(frame SliceFrame) {
-	imgWidth := 256
-	fromSliceToVoxel := mat4.Ident.ScaleVec3()
-}
 func (v Volume) Render() {
 
 	for z, slice := range v.Data {
 		img := image.NewRGBA(image.Rect(0, 0, len(slice[0]), len(slice)))
 		for r, row := range slice {
-			for c, _ := range row {
+			for c := range row {
 				pixel := v.Data[z][r][c]
 				img.SetRGBA(c, r, color.RGBA{A: 0xFF, R: pixel, G: pixel, B: pixel})
 			}
@@ -109,22 +80,79 @@ func importDicoms(folderPath string) []DicomFile {
 func loadFrame(data DcmData, pixeldata dicom.PixelDataInfo) ([][]byte, error) {
 	frame := pixeldata.Frames[0]
 	nativeFrame, _ := frame.GetNativeFrame()
-	img := make([][]byte, data.Rows)
+	imgb := make([][]byte, data.Rows)
 	for i := 0; i < data.Rows; i++ {
-		img[i] = make([]byte, data.Cols)
+		imgb[i] = make([]byte, data.Cols)
 	}
 
-	for j := 0; j < len(nativeFrame.Data); j++ {
-		pixel := float32(nativeFrame.Data[j][0]*data.Slope + data.Intercept)
-
-		if pixel <= float32(data.Window)-0.5-(float32(data.Level-1)/2) {
-			pixel = 0
-		} else if pixel > float32(data.Window)-0.5+float32(data.Level-1)/2 {
-			pixel = 255
+	for i := 0; i < len(nativeFrame.Data); i++ {
+		pixel := nativeFrame.Data[i][0]*data.Slope + data.Intercept
+		pixelByte := uint8(0)
+		if float32(pixel) <= float32(data.Window)-0.5-(float32(data.Level-1)/2) {
+			pixelByte = 0
+		} else if float32(pixel) > float32(data.Window)-0.5+float32(data.Level-1)/2 {
+			pixelByte = 255
 		} else {
-			pixel = ((pixel-(float32(data.Window)-0.5))/float32(data.Level-1) + 0.5) * float32(255)
+			pixelByte = uint8(((float32(pixel)-(float32(data.Window)-0.5))/float32(data.Level-1) + 0.5) * float32(255))
 		}
-		img[j/data.Cols][j%data.Cols] = byte(pixel)
+		c := i % data.Cols
+		r := i / data.Rows
+		imgb[r][c] = pixelByte
 	}
-	return img, nil
+
+	return imgb, nil
+}
+
+func (volume Volume) GetCorners() AABB {
+
+	min := math32.Vector3{0, 0, 0}
+	max := math32.Vector3{float32(volume.DcmData.Cols), float32(volume.DcmData.Rows), float32(volume.DcmData.Depth)}
+	box := math32.NewBox3(&min, &max)
+
+	var corners []math32.Vector3
+	corners = append(corners, math32.Vector3{box.Min.X, box.Min.Y, box.Min.Z})
+	corners = append(corners, math32.Vector3{box.Min.X, box.Max.Y, box.Min.Z})
+	corners = append(corners, math32.Vector3{box.Max.X, box.Min.Y, box.Min.Z})
+	corners = append(corners, math32.Vector3{box.Max.X, box.Max.Y, box.Min.Z})
+	corners = append(corners, math32.Vector3{box.Min.X, box.Min.Y, box.Max.Z})
+	corners = append(corners, math32.Vector3{box.Min.X, box.Max.Y, box.Max.Z})
+	corners = append(corners, math32.Vector3{box.Max.X, box.Min.Y, box.Max.Z})
+	corners = append(corners, math32.Vector3{box.Max.X, box.Max.Y, box.Max.Z})
+
+	minX, minY, minZ := float32(math.MaxFloat32), float32(math.MaxFloat32), float32(math.MaxFloat32)
+	maxX, maxY, maxZ := float32(math.SmallestNonzeroFloat32), float32(math.SmallestNonzeroFloat32), float32(math.SmallestNonzeroFloat32)
+
+	calibratedCorners := []math32.Vector3{}
+	for i := 0; i < len(corners); i++ {
+		c := corners[i]
+		c.ApplyMatrix4(volume.DcmData.Calibration)
+		calibratedCorners = append(calibratedCorners, c)
+		x := c.X
+		y := c.Y
+		z := c.Z
+		if x < minX {
+			minX = x
+		}
+		if x > maxX {
+			maxX = x
+		}
+		if y < minY {
+			minY = y
+		}
+		if y > maxY {
+			maxY = y
+		}
+		if z < minZ {
+			minZ = z
+		}
+		if z > maxZ {
+			maxZ = z
+		}
+	}
+
+	calibratedBox := math32.NewBox3(math32.NewVector3(minX, minY, minZ), math32.NewVector3(maxX, maxY, maxZ))
+	return AABB{
+		CalibratedCorners: calibratedCorners,
+		Box:               calibratedBox,
+	}
 }

@@ -1,54 +1,46 @@
 package volume
 
 import (
-	"github.com/ungerik/go3d/mat4"
-	"github.com/ungerik/go3d/vec3"
+	"github.com/g3n/engine/math32"
 )
 
 type SliceFrame struct {
-	Frame mat4.T
-	Plane Plane
-	AABB  AABB
+	Frame   *math32.Matrix4
+	Plane   *math32.Plane
+	AABB    AABB
+	Box2f   Box2f
+	Corners []math32.Vector3
 }
 
 type AABB struct {
-	CalibratedCorners []vec3.T
-	Box               vec3.Box
+	CalibratedCorners []math32.Vector3
+	Box               *math32.Box3
 }
 
-func getCorners(volume Volume) AABB {
+func AABBIntersections(v Volume, frame *math32.Matrix4) (SliceFrame, error) {
+	var intersections []math32.Vector3
+	origin := math32.Vector3{0, 0, 0}
+	z := math32.Vector3{0, 0, 1}
+	origin.ApplyMatrix4(frame)
+	z.ApplyMatrix4(frame)
 
-	box := vec3.Box{
-		Min: vec3.Zero,
-		Max: vec3.T{float32(volume.DcmData.Cols), float32(volume.DcmData.Rows), float32(volume.DcmData.Depth)},
+	z.Normalize()
+	plane := math32.NewPlane(&z, origin.Length())
+	corners := v.GetCorners()
+	for _, ray := range getSides(corners.Box, plane) {
+		pt, err := rp(ray, plane)
+		if err == nil {
+			intersections = append(intersections, pt)
+		}
 	}
 
-	var corners []vec3.T
-	center := box.Center()
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Min), GetY(box.Min), GetZ(box.Min)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Min), GetY(box.Max), GetZ(box.Min)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Max), GetY(box.Min), GetZ(box.Min)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Max), GetY(box.Max), GetZ(box.Min)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Min), GetY(box.Min), GetZ(box.Max)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Min), GetY(box.Max), GetZ(box.Max)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Max), GetY(box.Min), GetZ(box.Max)}))
-	corners = append(corners, vec3.Add(&center, &vec3.T{GetX(box.Max), GetY(box.Max), GetZ(box.Max)}))
+	box2f := AABB2f(ToPlaneUVBatch(intersections, z))
 
-	for i := 0; i < len(corners); i++ {
-		corners[i] = volume.DcmData.Calibration.MulVec3(&corners[i])
-	}
-	return AABB{
-		CalibratedCorners: corners,
-		Box:               box,
-	}
-}
-
-func GetX(v vec3.T) float32 {
-	return v.Get(0, 0)
-}
-func GetY(v vec3.T) float32 {
-	return v.Get(0, 1)
-}
-func GetZ(v vec3.T) float32 {
-	return v.Get(0, 2)
+	return SliceFrame{
+		frame,
+		plane,
+		corners,
+		box2f,
+		intersections,
+	}, nil
 }
