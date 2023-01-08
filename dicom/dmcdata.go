@@ -13,11 +13,12 @@ type DcmData struct {
 	Rows        int
 	Cols        int
 	Depth       int
-	Window      int
-	Level       int
-	Slope       int
-	Intercept   int
+	Window      float32
+	Level       float32
+	Slope       float32
+	Intercept   float32
 	Calibration *math32.Matrix4
+	Orientation *math32.Matrix4
 	Origin      math32.Vector3
 	VoxelSize   math32.Vector3
 }
@@ -31,12 +32,16 @@ func readPixelData(dcm dicom.Dataset, tag tag.Tag) (dicom.PixelDataInfo, error) 
 	return pixelDataInfo, nil
 }
 
-func readTag(dcm dicom.Dataset, tag tag.Tag) (int, error) {
+func readTag(dcm dicom.Dataset, tag tag.Tag) (float32, error) {
 	element, err := dcm.FindElementByTag(tag)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(element.Value.GetValue().([]string)[0])
+	f, err := strconv.ParseFloat(element.Value.GetValue().([]string)[0], 32)
+	if err != nil {
+		return 0, err
+	}
+	return float32(f), nil
 }
 
 func readCal(dcm dicom.Dataset, tag tag.Tag) (*math32.Matrix4, []math32.Vector3, error) {
@@ -45,15 +50,14 @@ func readCal(dcm dicom.Dataset, tag tag.Tag) (*math32.Matrix4, []math32.Vector3,
 		return math32.NewMatrix4(), []math32.Vector3{}, err
 	}
 	values := element.Value.GetValue().([]string)
-	dirx := math32.Vector3{readFloat(values[0]), readFloat(values[1]), readFloat(values[2])}
-	dirx.Normalize()
-	diry := math32.Vector3{readFloat(values[3]), readFloat(values[4]), readFloat(values[5])}
-	diry.Normalize()
-	dirz := dirx.Cross(&diry)
+	dirX := math32.Vector3{readFloat(values[0]), readFloat(values[1]), readFloat(values[2])}
+	dirY := math32.Vector3{readFloat(values[3]), readFloat(values[4]), readFloat(values[5])}
+
+	dirz := math32.NewVector3(0, 0, 0).CrossVectors(&dirX, &dirY)
 	dirz.Normalize()
 
-	m := math32.NewMatrix4().MakeBasis(&dirx, &diry, dirz)
-	return m, []math32.Vector3{dirx, diry, *dirz}, nil
+	m := math32.NewMatrix4().MakeBasis(&dirX, &dirY, dirz)
+	return m, []math32.Vector3{dirX, dirY, *dirz}, nil
 }
 
 func readOrigin(dcm dicom.Dataset, tag tag.Tag) (math32.Vector3, error) {
@@ -94,8 +98,9 @@ func readDcmData(dcm []DicomFile) DcmData {
 	z := math32.NewVector3(0, 0, 1)
 	z.ApplyMatrix4(orientation)
 	z.Normalize()
-	voxelSize, _ := readVoxelSize(dcm[1].dataset, dcm[2].dataset, tag.PixelSpacing, origin, z)
-	cal := math32.NewMatrix4().Scale(voxelSize).Multiply(orientation).SetPosition(&origin)
+	voxelSize, _ := readVoxelSize(dataset, dcm[1].dataset, tag.PixelSpacing, origin, z)
+	cal := math32.NewMatrix4().Multiply(orientation).Scale(voxelSize).SetPosition(&origin)
+	ori := math32.NewMatrix4().Multiply(orientation)
 	return DcmData{rows,
 		cols,
 		len(dcm),
@@ -104,6 +109,7 @@ func readDcmData(dcm []DicomFile) DcmData {
 		slope,
 		intercept,
 		cal,
+		ori,
 		origin,
 		*voxelSize}
 }

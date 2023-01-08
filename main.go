@@ -6,8 +6,9 @@ import (
 )
 
 func main() {
-	volume := volume.New("C:\\Users\\franc\\Desktop\\98890234_20030505_CT.tar\\98890234_20030505_CT\\98890234\\20030505\\CT\\CT2")
-	volume.Render()
+	//volume := volume.New("C:\\Users\\franc\\Desktop\\98890234_20030505_CT.tar\\98890234_20030505_CT\\98890234\\20030505\\CT\\CT2")
+	volume := volume.New("C:\\Users\\franc\\Desktop\\OneDrive_2023-01-04\\Circle of Willis")
+	//volume.Render()
 	s, e := volume.Cut()
 	if e != nil {
 		return

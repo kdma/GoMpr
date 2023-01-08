@@ -2,52 +2,67 @@ package volume
 
 import (
 	"errors"
+	"math"
 
 	"github.com/g3n/engine/math32"
 )
 
-func getSides(box *math32.Box3, plane *math32.Plane) []*math32.Ray {
+func getSides(box *math32.Box3, v Volume) []*math32.Ray {
 
 	var edges []*math32.Ray
-	edges = append(edges, math32.NewRay(&box.Min, math32.NewVector3(box.Max.X-box.Min.X, 0, 0)))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Min.Z), math32.NewVector3(box.Max.X-box.Min.X, 0, 0).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Min.Z), math32.NewVector3(box.Max.X-box.Min.X, 0, 0).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Max.Z), math32.NewVector3(box.Max.X-box.Min.X, 0, 0).Normalize()))
+	noT := math32.NewMatrix4().Identity().Copy(v.DcmData.Calibration).SetPosition(math32.NewVec3())
+	dirX := math32.NewVector3(1, 0, 0).ApplyMatrix4(noT).Normalize()
+	dirY := math32.NewVector3(0, 1, 0).ApplyMatrix4(noT).Normalize()
+	dirZ := math32.NewVector3(0, 0, 1).ApplyMatrix4(noT).Normalize()
 
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Min.Z), math32.NewVector3(0, box.Max.Y-box.Min.Y, 0).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Min.Z), math32.NewVector3(0, box.Max.Y-box.Min.Y, 0).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Max.Z), math32.NewVector3(0, box.Max.Y-box.Min.Y, 0).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Max.Z), math32.NewVector3(0, box.Max.Y-box.Min.Y, 0).Normalize()))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Min.Z), dirX))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Min.Z), dirX))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Max.Z), dirX))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Max.Z), dirX))
 
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Min.Z), math32.NewVector3(0, 0, box.Max.Z-box.Min.Z).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Min.Z), math32.NewVector3(0, 0, box.Max.Z-box.Min.Z).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Min.Z), math32.NewVector3(0, 0, box.Max.Z-box.Min.Z).Normalize()))
-	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Max.Y, box.Min.Z), math32.NewVector3(0, 0, box.Max.Z-box.Min.Z).Normalize()))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Min.Z), dirY))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Min.Z), dirY))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Max.Z), dirY))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Max.Z), dirY))
+
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Min.Y, box.Min.Z), dirZ))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Min.Y, box.Min.Z), dirZ))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Min.X, box.Max.Y, box.Min.Z), dirZ))
+	edges = append(edges, math32.NewRay(math32.NewVector3(box.Max.X, box.Max.Y, box.Min.Z), dirZ))
 
 	return edges
 }
+func rp2(ray *math32.Ray, plane *math32.Plane, aabb AABB) (math32.Vector3, error) {
 
-func rp(ray *math32.Ray, plane *math32.Plane) (math32.Vector3, error) {
-
-	i := ray.IntersectPlane(plane, nil)
-	if i != nil {
-		return math32.Vector3{i.X, i.Y, i.Z}, nil
+	intersection := ray.IntersectBox(aabb.Box, nil)
+	if intersection != nil {
+		return *intersection, nil
 	}
-	return math32.Vector3{}, errors.New("no intersection")
+	return *math32.NewVec3(), errors.New("no intersection")
+}
+
+func rp(ray *math32.Ray, plane *math32.Plane, aabb AABB) (math32.Vector3, error) {
+
+	ct := math32.Vector3{}
+	i := ray.IntersectPlane(plane, &ct)
+	isXNan := math.IsNaN(float64(i.X))
+	isYNan := math.IsNaN(float64(i.Y))
+	isZNan := math.IsNaN(float64(i.Z))
+	if i != nil && !isXNan && !isYNan && !isZNan {
+		return math32.Vector3{X: i.X, Y: i.Y, Z: i.Z}, nil
+	} else {
+		return math32.Vector3{}, errors.New("no intersection")
+	}
 
 }
 
-func ToPlaneUV(v math32.Vector3, pNormal math32.Vector3) *math32.Vector2 {
-
-	v.ProjectOnPlane(&pNormal)
-	return math32.NewVector2(v.X, v.Y)
-}
-
-func ToPlaneUVBatch(pts []math32.Vector3, pNormal math32.Vector3) []*math32.Vector2 {
+func ToPlaneUV(pts []math32.Vector3, pNormal math32.Vector3) []*math32.Vector2 {
 
 	var res []*math32.Vector2
 	for _, pt := range pts {
-		v2 := ToPlaneUV(pt, pNormal)
+		ptCopy := math32.NewVector3(pt.X, pt.Y, pt.Z)
+		ptCopy.ProjectOnPlane(&pNormal)
+		v2 := math32.NewVector2(ptCopy.X, ptCopy.Y)
 		res = append(res, v2)
 	}
 

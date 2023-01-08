@@ -86,14 +86,14 @@ func loadFrame(data DcmData, pixeldata dicom.PixelDataInfo) ([][]byte, error) {
 	}
 
 	for i := 0; i < len(nativeFrame.Data); i++ {
-		pixel := nativeFrame.Data[i][0]*data.Slope + data.Intercept
+		pixel := float32(nativeFrame.Data[i][0])*data.Slope + data.Intercept
 		pixelByte := uint8(0)
-		if float32(pixel) <= float32(data.Window)-0.5-(float32(data.Level-1)/2) {
+		if pixel <= data.Window-0.5-(data.Level-1)/2 {
 			pixelByte = 0
-		} else if float32(pixel) > float32(data.Window)-0.5+float32(data.Level-1)/2 {
+		} else if pixel > data.Window-0.5+(data.Level-1)/2 {
 			pixelByte = 255
 		} else {
-			pixelByte = uint8(((float32(pixel)-(float32(data.Window)-0.5))/float32(data.Level-1) + 0.5) * float32(255))
+			pixelByte = uint8((((pixel)-((data.Window)-0.5))/(data.Level-1) + 0.5) * (255))
 		}
 		c := i % data.Cols
 		r := i / data.Rows

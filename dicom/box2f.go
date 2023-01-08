@@ -44,9 +44,9 @@ func AABB2f(corners []*math32.Vector2) Box2f {
 	}
 }
 
-func GetWidth(b math32.Box2) float32 {
-	return b.Size(nil).X
+func (b Box2f) GetWidth() float32 {
+	return b.Max.X - b.Min.X
 }
-func GetHeigth(b math32.Box2) float32 {
-	return b.Size(nil).Y
+func (b Box2f) GetHeigth() float32 {
+	return b.Max.Y - b.Min.Y
 }
