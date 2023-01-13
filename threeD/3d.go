@@ -2,7 +2,10 @@ package threeD
 
 import (
 	volume "awesomeProject/dicom"
+	"math"
 	"time"
+
+	"github.com/g3n/engine/math32"
 
 	"github.com/g3n/engine/app"
 	"github.com/g3n/engine/camera"
@@ -13,20 +16,84 @@ import (
 	"github.com/g3n/engine/gui"
 	"github.com/g3n/engine/light"
 	"github.com/g3n/engine/material"
-	"github.com/g3n/engine/math32"
 	"github.com/g3n/engine/renderer"
 	"github.com/g3n/engine/texture"
 	"github.com/g3n/engine/util/helper"
 	"github.com/g3n/engine/window"
 )
 
-func Draw(v volume.Volume, s volume.SliceFrame) {
-	// Create application and scene
+type Rotation int
+
+const (
+	X     Rotation = 0
+	Y              = 1
+	Z              = 2
+	Reset          = 3
+)
+
+func toDegree(rad float32) float32 {
+	return rad * (180 / math.Pi)
+}
+
+type ButtonStrip struct {
+	Rotation Rotation
+}
+
+func placeButtons(scene *core.Node, strip []ButtonStrip, angle *math32.Vector3, debug *bool) {
+	for i, b := range strip {
+		rot := Rotation(i)
+		button := gui.NewButton("Rotation" + mapRotation(b.Rotation))
+		button.SetPosition(10, float32(i*30))
+		button.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+			if rot == X {
+				incAngle(&angle.X)
+			} else if rot == Y {
+				incAngle(&angle.Y)
+			} else if rot == Z {
+				incAngle(&angle.Z)
+			} else {
+				angle.X = 0
+				angle.Y = 0
+				angle.Z = 0
+			}
+		})
+		scene.Add(button)
+	}
+	debugBtn := gui.NewCheckBox("dbg")
+	debugBtn.SetPosition(10, float32(150))
+	debugBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		*debug = !*debug
+	})
+	scene.Add(debugBtn)
+}
+
+func incAngle(f *float32) {
+	*f = *f + 0.2
+}
+
+func mapRotation(rot Rotation) string {
+	if rot == X {
+		return "X"
+	} else if rot == Y {
+		return "Y"
+	} else if rot == Z {
+		return "Z"
+	} else {
+		return "Reset"
+	}
+}
+
+func Init(v volume.Volume) {
 	a := app.App()
 	scene := core.NewNode()
+	angle := math32.NewVec3()
+	debug := false
 
+	var btns []ButtonStrip
+	btns = append(btns, ButtonStrip{0}, ButtonStrip{1}, ButtonStrip{2}, ButtonStrip{3})
 	// Set the scene to be managed by the gui manager
 	gui.Manager().Set(scene)
+	placeButtons(scene, btns, angle, &debug)
 
 	// Create camera and orbit control
 	width, height := a.GetSize()
@@ -47,14 +114,52 @@ func Draw(v volume.Volume, s volume.SliceFrame) {
 		// Update the camera's aspect ratio
 		cam.SetAspect(float32(width) / float32(height))
 	}
+
 	a.Subscribe(window.OnWindowSize, onResize)
 	onResize("", nil)
 
+	a.Gls().ClearColor(1, 1, 1, 1.0)
+
+	dcmNode := core.NewNode()
+	debugNode := core.NewNode()
+
+	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
+		basis := math32.NewMatrix4().Multiply(v.DcmData.Orientation).Multiply(math32.NewMatrix4().MakeRotationFromEuler(angle))
+		sliceFrame := volume.FreeRotation(v, basis)
+		v.Cut(sliceFrame)
+
+		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
+		renderer.Render(scene, cam)
+		renderer.Render(Draw(sliceFrame, v, dcmNode), cam)
+		renderer.Render(DrawDebug(sliceFrame, debugNode, debug), cam)
+	})
+}
+
+func DrawDebug(sliceFrame volume.SliceFrame, node *core.Node, debug bool) *core.Node {
+	if node != nil {
+		node.RemoveAll(true)
+	}
+	if !debug {
+		return node
+	}
+	addDots([]math32.Vector3{*sliceFrame.FirstPixelOrigin}, node, &math32.Color{1, 0, 0}, true)
+	addRays(sliceFrame.Rays, sliceFrame, node)
+	return node
+}
+
+func Draw(sliceFrame volume.SliceFrame, v volume.Volume, node *core.Node) *core.Node {
+
+	if node != nil {
+		node.RemoveAll(true)
+	}
+
+	scene := core.NewNode()
 	addbox(v, scene, &math32.Color{1, 1, 1})
-	addDots(s.AABB.CalibratedCorners, scene, &math32.Color{0, 0, 1})
-	addDots(s.Intersections, scene, &math32.Color{0, 1, 0})
-	addRays(s.Rays, s, scene)
-	addplane(s, v, scene)
+	addDots(sliceFrame.AABB.CalibratedCorners, scene, &math32.Color{0, 0, 1}, false)
+	addDots(sliceFrame.Intersections, scene, &math32.Color{0, 1, 0}, false)
+
+	addPlane(sliceFrame, v, scene)
+	addBasis(sliceFrame, v, scene)
 
 	// Create and add lights to the scene
 	scene.Add(light.NewAmbient(&math32.Color{1.0, 1.0, 1.0}, 0.8))
@@ -66,15 +171,15 @@ func Draw(v volume.Volume, s volume.SliceFrame) {
 	scene.Add(helper.NewAxes(100))
 	grid := helper.NewGrid(1000, 10, &math32.Color{0.5, 0.5, 0.5})
 	scene.Add(grid)
+	return scene
+}
 
-	// Set background color to gray
-	a.Gls().ClearColor(1, 1, 1, 1.0)
+func addBasis(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 
-	// Run the application
-	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
-		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
-		renderer.Render(scene, cam)
-	})
+	axis := helper.NewAxes(100)
+	axis.SetMatrix(s.RotatedFrame.Basis)
+	axis.SetPositionVec(s.AABB.Box.Center(nil))
+	scene.Add(axis)
 }
 
 func addRays(r []math32.Ray, s volume.SliceFrame, scene *core.Node) {
@@ -114,9 +219,14 @@ func addRays(r []math32.Ray, s volume.SliceFrame, scene *core.Node) {
 
 	}
 }
-func addDots(v []math32.Vector3, scene *core.Node, c *math32.Color) {
+
+func addDots(v []math32.Vector3, scene *core.Node, c *math32.Color, magnify bool) {
 	for _, el := range v {
-		dot := geometry.NewSphere(1, 4, 4)
+		size := 1.0
+		if magnify {
+			size = 2.5
+		}
+		dot := geometry.NewSphere(size, 4, 4)
 		mat1 := material.NewStandard(c)
 		mat1.SetWireframe(true)
 		mat1.SetSide(material.SideDouble)
@@ -126,19 +236,19 @@ func addDots(v []math32.Vector3, scene *core.Node, c *math32.Color) {
 	}
 }
 
-func addplane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
+func addPlane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 	w := s.ImageSizeInMm.X
 	h := s.ImageSizeInMm.Y
 	plane := geometry.NewBox(w, h, 1)
-	plane.ApplyMatrix(s.Basis)
+	plane.ApplyMatrix(s.RotatedFrame.Basis)
 
-	texfile := "C:\\Users\\franc\\Desktop\\Nuova cartella\\mpr.jpg"
-	tex2, _ := texture.NewTexture2DFromImage(texfile)
+	tex2 := texture.NewTexture2DFromRGBA(*s.Mpr)
 
 	mat1 := material.NewStandard(&math32.Color{1, 1, 1})
 	mat1.AddTexture(tex2)
 	mat1.SetSide(material.SideDouble)
 	mPlane := graphic.NewMesh(plane, mat1)
+	mPlane.SetPositionVec(s.AABB.Box.Center(nil))
 	scene.Add(mPlane)
 }
 

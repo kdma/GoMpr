@@ -49,7 +49,11 @@ func rp(ray *math32.Ray, plane *math32.Plane, aabb AABB) (math32.Vector3, error)
 	isYNan := math.IsNaN(float64(i.Y))
 	isZNan := math.IsNaN(float64(i.Z))
 	if i != nil && !isXNan && !isYNan && !isZNan {
-		return math32.Vector3{X: i.X, Y: i.Y, Z: i.Z}, nil
+		if aabb.Box.ContainsPoint(i) {
+			return math32.Vector3{X: i.X, Y: i.Y, Z: i.Z}, nil
+		} else {
+			return *math32.NewVec3(), nil
+		}
 	} else {
 		return math32.Vector3{}, errors.New("no intersection")
 	}

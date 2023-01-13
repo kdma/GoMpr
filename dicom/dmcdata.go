@@ -114,9 +114,6 @@ func readDcmData(dcm []DicomFile) DcmData {
 		*voxelSize}
 }
 
-func toDegree(rad float32) float32 {
-	return rad * (180 / math.Pi)
-}
 func readVoxelSize(dcm dicom.Dataset, dcm2 dicom.Dataset, tg tag.Tag, origin math32.Vector3, dirZ *math32.Vector3) (*math32.Vector3, error) {
 	element, err := dcm.FindElementByTag(tg)
 	if err != nil {

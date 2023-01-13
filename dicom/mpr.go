@@ -5,25 +5,45 @@ import (
 	"image/color"
 	"image/jpeg"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 
 	"github.com/g3n/engine/math32"
 )
 
-func (v Volume) Cut() (SliceFrame, error) {
+func (v Volume) Cut(sliceFrame SliceFrame) {
+	imgWidth := int(sliceFrame.ImageSize.X)
+	imgHeight := int(sliceFrame.ImageSize.Y)
+	id := math32.NewMatrix4().Copy(v.DcmData.Calibration)
+	calibratedToVoXel := math32.NewMatrix4()
+	calibratedToVoXel.GetInverse(id)
 
-	sliceFrame, err := AABBIntersections(v)
-	if err != nil {
-		return SliceFrame{}, error(err)
+	fromSliceToVoxel := math32.NewMatrix4().Multiply(sliceFrame.RotatedFrame.Basis).Multiply(calibratedToVoXel)
+	image := make([]byte, imgWidth*imgHeight)
+
+	for x := 0; x < imgWidth; x++ {
+		for y := 0; y < imgHeight; y++ {
+
+			planeY := sliceFrame.Box2f.Min.Y + float32(y)*sliceFrame.ImagePixelSize.Y
+			planeX := sliceFrame.Box2f.Min.X + float32(x)*sliceFrame.ImagePixelSize.X
+			v1 := math32.NewVector3(planeX, planeY, 0)
+			v1.Add(sliceFrame.FirstPixelOrigin)
+			v1.ApplyMatrix4(fromSliceToVoxel)
+
+			vX := clamp(v1.X, 0, v.DcmData.Cols-1)
+			vY := clamp(v1.Y, 0, v.DcmData.Rows-1)
+			vZ := clamp(v1.Z, 0, v.DcmData.Depth-1)
+
+			image[imgWidth*y+x] = v.Data[vZ][vY][vX]
+		}
 	}
-	RenderSlice(sliceFrame, v)
-	return sliceFrame, nil
+	*sliceFrame.Mpr = Mpr(image, imgWidth, imgHeight, v.DcmData, false)
 }
 
 func clamp(f float32, min int, max int) int {
 
-	fInt := int(f)
+	fInt := int(math.Round(float64(f)))
 	if fInt < min {
 		return 0
 	}
@@ -33,39 +53,7 @@ func clamp(f float32, min int, max int) int {
 	return fInt
 }
 
-func RenderSlice(sliceFrame SliceFrame, volume Volume) {
-	imgWidth := int(sliceFrame.ImageSize.X)
-	imgHeight := int(sliceFrame.ImageSize.Y)
-	id := math32.NewMatrix4().Copy(volume.DcmData.Calibration).SetPosition(math32.NewVec3())
-	calibratedToVoXel := math32.NewMatrix4()
-	calibratedToVoXel.GetInverse(id)
-
-	//trans := math32.NewVector3(-volume.DcmData.Origin.X, -volume.DcmData.Origin.Y, -volume.DcmData.Origin.Z)
-	fromSliceToVoxel := math32.NewMatrix4().Multiply(sliceFrame.Basis).Multiply(calibratedToVoXel)
-	image := make([]byte, imgWidth*imgHeight)
-
-	for x := 0; x < imgWidth; x++ {
-		for y := 0; y < imgHeight; y++ {
-
-			fx := float32(x)
-			fy := float32(y)
-
-			v := math32.NewVector3(fx, fy, 0)
-			v.ApplyMatrix4(fromSliceToVoxel)
-			vX := clamp(v.X, 0, volume.DcmData.Cols-1)
-			vY := clamp(v.Y, 0, volume.DcmData.Rows-1)
-			vZ := clamp(v.Z, 0, volume.DcmData.Depth-1)
-
-			image[imgWidth*y+x] = volume.Data[vZ][vY][vX]
-
-		}
-
-	}
-
-	Mpr(image, imgWidth, imgHeight, volume.DcmData)
-}
-
-func Mpr(slice []byte, width int, height int, data DcmData) {
+func Mpr(slice []byte, width int, height int, data DcmData, debug bool) *image.RGBA {
 
 	rescaled := make([]byte, len(slice))
 	for j := 0; j < len(slice); j++ {
@@ -88,10 +76,13 @@ func Mpr(slice []byte, width int, height int, data DcmData) {
 		}
 	}
 
-	f, err := os.Create(filepath.Join("C:\\Users\\franc\\Desktop\\Nuova Cartella", "mpr.jpg"))
-	if err != nil {
-		log.Fatal(err)
+	if debug {
+		f, err := os.Create(filepath.Join("C:\\Users\\franc\\Desktop\\Nuova Cartella", "mpr.jpg"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		_ = jpeg.Encode(f, img, &jpeg.Options{Quality: 100})
+		_ = f.Close()
 	}
-	_ = jpeg.Encode(f, img, &jpeg.Options{Quality: 100})
-	_ = f.Close()
+	return img
 }
