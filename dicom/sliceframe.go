@@ -7,16 +7,15 @@ import (
 )
 
 type SliceFrame struct {
-	RotatedFrame     RotatedFrame
-	AABB             AABB
-	Box2f            Box2f
-	Intersections    []math32.Vector3
-	Rays             []math32.Ray
-	ImageSize        *math32.Vector2
-	ImageSizeInMm    *math32.Vector2
-	ImagePixelSize   *math32.Vector2
-	FirstPixelOrigin *math32.Vector3
-	Mpr              **image.RGBA
+	RotatedFrame   RotatedFrame
+	AABB           AABB
+	Box2f          Box2f
+	Intersections  []math32.Vector3
+	Rays           []math32.Ray
+	ImageSize      *math32.Vector2
+	ImageSizeInMm  *math32.Vector2
+	ImagePixelSize *math32.Vector2
+	Mpr            **image.RGBA
 }
 
 type AABB struct {
@@ -42,19 +41,26 @@ func filter(vecs []math32.Vector3) []math32.Vector3 {
 	return acc
 }
 
-func FreeRotation(v Volume, basis *math32.Matrix4) SliceFrame {
+func Axial(v Volume, slice int) SliceFrame {
 	var intersections []math32.Vector3
 	var rays []math32.Ray
-
 	aabb := v.GetCorners()
-	boxCenter := aabb.Box.Center(nil)
+	dataToSlice := math32.NewMatrix4().Multiply(v.DcmData.Calibration)
+	t := math32.NewVector3(0, 0, float32(slice))
+	t.ApplyMatrix4(dataToSlice)
+	dataToSlice.Multiply(math32.NewMatrix4().MakeTranslation(t.X, t.Y, t.Z))
 
-	basisOrigin := boxCenter
-	z := math32.Vector3{0, 0, -1}
-	z.ApplyMatrix4(basis)
+	origin := math32.NewVec3()
+	origin.ApplyMatrix4(dataToSlice)
+
+	z := math32.NewVector3(0, 0, 1)
+	z.ApplyMatrix4(dataToSlice)
 	z.Normalize()
 
-	plane := math32.NewPlane(&z, boxCenter.Length())
+	basis := math32.NewMatrix4().MakeTranslation(origin.X, origin.Y, origin.Z)
+	zP := math32.Vector3{0, 0, -1}
+
+	plane := math32.NewPlane(&zP, origin.Length())
 	for _, ray := range getSides(aabb.Box, v) {
 		rays = append(rays, *ray)
 		pt, err := rp(ray, plane, aabb)
@@ -63,7 +69,52 @@ func FreeRotation(v Volume, basis *math32.Matrix4) SliceFrame {
 		}
 	}
 
-	box2f := AABB2f(ToPlaneUV(intersections, z, boxCenter, basis))
+	box2f := AABB2f(ToPlaneUV(intersections, zP, origin, basis))
+
+	imgWidth := float32(256)
+	boxw := box2f.GetWidth()
+	boxh := box2f.GetHeigth()
+	pixelSize := boxw / float32(imgWidth)
+	imgHeight := boxh / pixelSize
+	imageSize := math32.NewVector2(imgWidth, imgHeight)
+	imageSizeInMm := math32.NewVector2(boxw, boxh)
+	imagePixelSize := math32.NewVector2(pixelSize, pixelSize)
+	mpr := &image.RGBA{}
+	rotatedFrame := RotatedFrame{basis, origin, plane}
+	return SliceFrame{
+		rotatedFrame,
+		aabb,
+		box2f,
+		intersections,
+		rays,
+		imageSize,
+		imageSizeInMm,
+		imagePixelSize,
+		&mpr,
+	}
+}
+
+func FreeRotation(v Volume, basis *math32.Matrix4) SliceFrame {
+	var intersections []math32.Vector3
+	var rays []math32.Ray
+
+	aabb := v.GetCorners()
+	boxCenter := aabb.Box.Center(nil)
+	basisOrigin := boxCenter
+	z := math32.Vector3{0, 0, -1}
+	z.ApplyMatrix4(basis)
+	z.Normalize()
+
+	plane := math32.NewPlane(&z, basisOrigin.Length())
+	for _, ray := range getSides(aabb.Box, v) {
+		rays = append(rays, *ray)
+		pt, err := rp(ray, plane, aabb)
+		if err == nil {
+			intersections = append(intersections, pt)
+		}
+	}
+
+	box2f := AABB2f(ToPlaneUV(intersections, z, basisOrigin, basis))
 
 	imgWidth := float32(256)
 	boxw := box2f.GetWidth()
@@ -84,7 +135,6 @@ func FreeRotation(v Volume, basis *math32.Matrix4) SliceFrame {
 		imageSize,
 		imageSizeInMm,
 		imagePixelSize,
-		basisOrigin,
 		&mpr,
 	}
 }

@@ -25,20 +25,31 @@ func (v Volume) Cut(sliceFrame SliceFrame) {
 	for x := 0; x < imgWidth; x++ {
 		for y := 0; y < imgHeight; y++ {
 
-			planeY := sliceFrame.Box2f.Min.Y + float32(y)*sliceFrame.ImagePixelSize.Y
-			planeX := sliceFrame.Box2f.Min.X + float32(x)*sliceFrame.ImagePixelSize.X
-			v1 := math32.NewVector3(planeX, planeY, 0)
-			v1.Add(sliceFrame.FirstPixelOrigin)
-			v1.ApplyMatrix4(fromSliceToVoxel)
+			fx := float32(x)
+			fy := float32(y)
+			dcmCoords := math32.NewVector3(fx, fy, 0)
+			dcmCoords.ApplyMatrix4(fromSliceToVoxel)
 
-			vX := clamp(v1.X, 0, v.DcmData.Cols-1)
-			vY := clamp(v1.Y, 0, v.DcmData.Rows-1)
-			vZ := clamp(v1.Z, 0, v.DcmData.Depth-1)
+			vX := clamp(dcmCoords.X, 0, v.DcmData.Cols-1)
+			vY := clamp(dcmCoords.Y, 0, v.DcmData.Rows-1)
+			vZ := clamp(dcmCoords.Z, 0, v.DcmData.Depth-1)
 
 			image[imgWidth*y+x] = v.Data[vZ][vY][vX]
 		}
 	}
 	*sliceFrame.Mpr = Mpr(image, imgWidth, imgHeight, v.DcmData, false)
+}
+
+func GetM(fromSliceToVoxel *math32.Matrix4) []float32 {
+	m := make([]float32, 16)
+	for i := 0; i < 4; i++ {
+		v := fromSliceToVoxel.GetColumnVector3(i)
+		for j := 0; j < 3; j++ {
+			m[i*4+j] = v.Component(j)
+		}
+	}
+
+	return m
 }
 
 func clamp(f float32, min int, max int) int {

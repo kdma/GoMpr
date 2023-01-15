@@ -19,8 +19,8 @@ type DcmData struct {
 	Intercept   float32
 	Calibration *math32.Matrix4
 	Orientation *math32.Matrix4
-	Origin      math32.Vector3
-	VoxelSize   math32.Vector3
+	Origin      *math32.Vector3
+	VoxelSize   *math32.Vector3
 }
 
 func readPixelData(dcm dicom.Dataset, tag tag.Tag) (dicom.PixelDataInfo, error) {
@@ -94,12 +94,12 @@ func readDcmData(dcm []DicomFile) DcmData {
 	slope, _ := readTag(dataset, tag.RescaleSlope)
 	orientation, _, _ := readCal(dataset, tag.ImageOrientationPatient)
 	intercept, _ := readTag(dataset, tag.RescaleIntercept)
-	origin, _ := readOrigin(dataset, tag.ImagePositionPatient)
+	origin := math32.NewVec3()
 	z := math32.NewVector3(0, 0, 1)
 	z.ApplyMatrix4(orientation)
 	z.Normalize()
-	voxelSize, _ := readVoxelSize(dataset, dcm[1].dataset, tag.PixelSpacing, origin, z)
-	cal := math32.NewMatrix4().Multiply(orientation).Scale(voxelSize).SetPosition(&origin)
+	voxelSize, _ := readVoxelSize(dataset, dcm[1].dataset, tag.PixelSpacing, z)
+	cal := math32.NewMatrix4().Multiply(orientation).Scale(voxelSize).SetPosition(math32.NewVec3().Copy(origin))
 	ori := math32.NewMatrix4().Multiply(orientation)
 	return DcmData{rows,
 		cols,
@@ -111,14 +111,15 @@ func readDcmData(dcm []DicomFile) DcmData {
 		cal,
 		ori,
 		origin,
-		*voxelSize}
+		voxelSize}
 }
 
-func readVoxelSize(dcm dicom.Dataset, dcm2 dicom.Dataset, tg tag.Tag, origin math32.Vector3, dirZ *math32.Vector3) (*math32.Vector3, error) {
+func readVoxelSize(dcm dicom.Dataset, dcm2 dicom.Dataset, tg tag.Tag, dirZ *math32.Vector3) (*math32.Vector3, error) {
 	element, err := dcm.FindElementByTag(tg)
 	if err != nil {
 		return math32.NewVector3(0, 0, 0), err
 	}
+	origin, _ := readOrigin(dcm, tag.ImagePositionPatient)
 	origin2, _ := readOrigin(dcm2, tag.ImagePositionPatient)
 	values := element.Value.GetValue().([]string)
 	dot1 := origin.Dot(dirZ)

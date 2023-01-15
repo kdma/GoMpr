@@ -2,6 +2,7 @@ package threeD
 
 import (
 	volume "awesomeProject/dicom"
+	"fmt"
 	"math"
 	"time"
 
@@ -39,30 +40,52 @@ type ButtonStrip struct {
 	Rotation Rotation
 }
 
-func placeButtons(scene *core.Node, strip []ButtonStrip, angle *math32.Vector3, debug *bool) {
+type GuiState struct {
+	Debug     bool
+	Angle     *math32.Vector3
+	Slice     *math32.Vector3
+	DcmNode   *core.Node
+	DebugNode *core.Node
+	Axial     volume.SliceFrame
+}
+
+func placeButtons(scene *core.Node, strip []ButtonStrip, guiState *GuiState, v volume.Volume) {
 	for i, b := range strip {
 		rot := Rotation(i)
-		button := gui.NewButton("Rotation" + mapRotation(b.Rotation))
+		button := gui.NewButton("Slice" + mapRotation(b.Rotation))
+		label := gui.NewLabel("0")
+		label.SetBgColor(math32.NewColor("darkorange"))
 		button.SetPosition(10, float32(i*30))
+		label.SetPosition(200, float32(i*30))
 		button.Subscribe(gui.OnClick, func(name string, ev interface{}) {
 			if rot == X {
-				incAngle(&angle.X)
+				guiState.Slice.X += 1
+				label.SetText(fmt.Sprintf("%f", (guiState.Slice.X)))
 			} else if rot == Y {
-				incAngle(&angle.Y)
+				guiState.Slice.Y += 1
+				label.SetText(fmt.Sprintf("%f", (guiState.Slice.Y)))
 			} else if rot == Z {
-				incAngle(&angle.Z)
+				guiState.Slice.Z += 1
+				sliceFrame := volume.Axial(v, int(guiState.Slice.Z))
+				v.Cut(sliceFrame)
+				guiState.Axial = sliceFrame
+				label.SetText(fmt.Sprintf("%f", (guiState.Slice.Z)))
 			} else {
-				angle.X = 0
-				angle.Y = 0
-				angle.Z = 0
+
+				guiState.Slice.X = 0
+				guiState.Slice.Y = 0
+				guiState.Slice.Z = 0
+
+				label.SetText(fmt.Sprintf("%f", 0))
 			}
 		})
 		scene.Add(button)
+		scene.Add(label)
 	}
 	debugBtn := gui.NewCheckBox("dbg")
 	debugBtn.SetPosition(10, float32(150))
 	debugBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		*debug = !*debug
+		guiState.Debug = !guiState.Debug
 	})
 	scene.Add(debugBtn)
 }
@@ -86,14 +109,21 @@ func mapRotation(rot Rotation) string {
 func Init(v volume.Volume) {
 	a := app.App()
 	scene := core.NewNode()
-	angle := math32.NewVec3()
-	debug := false
-
+	sliceFrame := volume.Axial(v, v.DcmData.Depth/2)
+	v.Cut(sliceFrame)
+	guiState := GuiState{
+		Debug:     true,
+		Slice:     math32.NewVector3(0, 0, float32(v.DcmData.Depth)/2),
+		Angle:     math32.NewVec3(),
+		DcmNode:   core.NewNode(),
+		DebugNode: core.NewNode(),
+		Axial:     sliceFrame,
+	}
 	var btns []ButtonStrip
 	btns = append(btns, ButtonStrip{0}, ButtonStrip{1}, ButtonStrip{2}, ButtonStrip{3})
 	// Set the scene to be managed by the gui manager
 	gui.Manager().Set(scene)
-	placeButtons(scene, btns, angle, &debug)
+	placeButtons(scene, btns, &guiState, v)
 
 	// Create camera and orbit control
 	width, height := a.GetSize()
@@ -102,6 +132,15 @@ func Init(v volume.Volume) {
 	cam.SetPosition(0, 0, 1000)
 	cam.SetProjection(camera.Orthographic)
 	scene.Add(cam)
+	// Create and add lights to the scene
+	scene.Add(light.NewAmbient(&math32.Color{1.0, 1.0, 1.0}, 0.8))
+	pointLight := light.NewPoint(&math32.Color{1, 1, 1}, 5.0)
+	pointLight.SetPosition(1, 0, 2)
+	scene.Add(pointLight)
+
+	// Create and add an axis helper to the scene
+	axis := helper.NewAxes(1000)
+	scene.Add(axis)
 
 	// Set up orbit control for the camera
 	camera.NewOrbitControl(cam)
@@ -120,18 +159,16 @@ func Init(v volume.Volume) {
 
 	a.Gls().ClearColor(1, 1, 1, 1.0)
 
-	dcmNode := core.NewNode()
-	debugNode := core.NewNode()
-
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
-		basis := math32.NewMatrix4().Multiply(v.DcmData.Orientation).Multiply(math32.NewMatrix4().MakeRotationFromEuler(angle))
-		sliceFrame := volume.FreeRotation(v, basis)
-		v.Cut(sliceFrame)
 
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
+
+		guiState.DcmNode = Draw(guiState.Axial, v, guiState.DcmNode)
+		guiState.DebugNode = DrawDebug(guiState.Axial, guiState.DebugNode, guiState.Debug)
+
 		renderer.Render(scene, cam)
-		renderer.Render(Draw(sliceFrame, v, dcmNode), cam)
-		renderer.Render(DrawDebug(sliceFrame, debugNode, debug), cam)
+		renderer.Render(guiState.DcmNode, cam)
+		renderer.Render(guiState.DebugNode, cam)
 	})
 }
 
@@ -142,7 +179,7 @@ func DrawDebug(sliceFrame volume.SliceFrame, node *core.Node, debug bool) *core.
 	if !debug {
 		return node
 	}
-	addDots([]math32.Vector3{*sliceFrame.FirstPixelOrigin}, node, &math32.Color{1, 0, 0}, true)
+	addDots([]math32.Vector3{*sliceFrame.RotatedFrame.Origin}, node, &math32.Color{1, 0, 0}, true)
 	addRays(sliceFrame.Rays, sliceFrame, node)
 	return node
 }
@@ -161,16 +198,6 @@ func Draw(sliceFrame volume.SliceFrame, v volume.Volume, node *core.Node) *core.
 	addPlane(sliceFrame, v, scene)
 	addBasis(sliceFrame, v, scene)
 
-	// Create and add lights to the scene
-	scene.Add(light.NewAmbient(&math32.Color{1.0, 1.0, 1.0}, 0.8))
-	pointLight := light.NewPoint(&math32.Color{1, 1, 1}, 5.0)
-	pointLight.SetPosition(1, 0, 2)
-	scene.Add(pointLight)
-
-	// Create and add an axis helper to the scene
-	scene.Add(helper.NewAxes(100))
-	grid := helper.NewGrid(1000, 10, &math32.Color{0.5, 0.5, 0.5})
-	scene.Add(grid)
 	return scene
 }
 
@@ -240,7 +267,7 @@ func addPlane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 	w := s.ImageSizeInMm.X
 	h := s.ImageSizeInMm.Y
 	plane := geometry.NewBox(w, h, 1)
-	plane.ApplyMatrix(s.RotatedFrame.Basis)
+	plane.ApplyMatrix(math32.NewMatrix4().MakeTranslation(w/2, h/2, .5).Multiply(s.RotatedFrame.Basis))
 
 	tex2 := texture.NewTexture2DFromRGBA(*s.Mpr)
 
@@ -248,7 +275,6 @@ func addPlane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 	mat1.AddTexture(tex2)
 	mat1.SetSide(material.SideDouble)
 	mPlane := graphic.NewMesh(plane, mat1)
-	mPlane.SetPositionVec(s.AABB.Box.Center(nil))
 	scene.Add(mPlane)
 }
 
