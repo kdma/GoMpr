@@ -63,7 +63,7 @@ func FreeRotation(v Volume, basis *math32.Matrix4) SliceFrame {
 		}
 	}
 
-	box2f := AABB2f(ToPlaneUV(intersections, z))
+	box2f := AABB2f(ToPlaneUV(intersections, z, boxCenter, basis))
 
 	imgWidth := float32(256)
 	boxw := box2f.GetWidth()

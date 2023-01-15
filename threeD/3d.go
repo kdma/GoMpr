@@ -68,7 +68,7 @@ func placeButtons(scene *core.Node, strip []ButtonStrip, angle *math32.Vector3, 
 }
 
 func incAngle(f *float32) {
-	*f = *f + 0.2
+	*f = *f + 0.1
 }
 
 func mapRotation(rot Rotation) string {
