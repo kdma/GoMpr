@@ -52,7 +52,7 @@ func rp(ray *math32.Ray, plane *math32.Plane, aabb AABB) (math32.Vector3, error)
 		if aabb.Box.ContainsPoint(i) {
 			return math32.Vector3{X: i.X, Y: i.Y, Z: i.Z}, nil
 		} else {
-			return *math32.NewVec3(), nil
+			return *math32.NewVec3(), errors.New("no intersection")
 		}
 	} else {
 		return math32.Vector3{}, errors.New("no intersection")
@@ -60,7 +60,7 @@ func rp(ray *math32.Ray, plane *math32.Plane, aabb AABB) (math32.Vector3, error)
 
 }
 
-func ToPlaneUV(pts []math32.Vector3, pNormal math32.Vector3, origin *math32.Vector3, basis *math32.Matrix4) []*math32.Vector2 {
+func ToPlaneUV(pts []math32.Vector3, pNormal *math32.Vector3, origin *math32.Vector3, basis *math32.Matrix4) []*math32.Vector2 {
 
 	var res []*math32.Vector2
 	for _, pt := range pts {
@@ -69,8 +69,8 @@ func ToPlaneUV(pts []math32.Vector3, pNormal math32.Vector3, origin *math32.Vect
 		v := ptCopy.Sub(origin)
 		xDir := math32.NewVector3(1, 0, 0)
 		yDir := math32.NewVector3(0, 1, 0)
-		xDir.ApplyMatrix4(basis)
-		yDir.ApplyMatrix4(basis)
+		v.ApplyMatrix4(basis)
+
 		onPlane := math32.NewVector2(v.Dot(xDir), v.Dot(yDir))
 		res = append(res, onPlane)
 	}

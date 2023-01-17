@@ -12,34 +12,6 @@ import (
 	"github.com/g3n/engine/math32"
 )
 
-func (v Volume) Cut(sliceFrame SliceFrame) {
-	imgWidth := int(sliceFrame.ImageSize.X)
-	imgHeight := int(sliceFrame.ImageSize.Y)
-	id := math32.NewMatrix4().Copy(v.DcmData.Calibration)
-	calibratedToVoXel := math32.NewMatrix4()
-	calibratedToVoXel.GetInverse(id)
-
-	fromSliceToVoxel := math32.NewMatrix4().Multiply(sliceFrame.RotatedFrame.Basis).Multiply(calibratedToVoXel)
-	image := make([]byte, imgWidth*imgHeight)
-
-	for x := 0; x < imgWidth; x++ {
-		for y := 0; y < imgHeight; y++ {
-
-			fx := float32(x)
-			fy := float32(y)
-			dcmCoords := math32.NewVector3(fx, fy, 0)
-			dcmCoords.ApplyMatrix4(fromSliceToVoxel)
-
-			vX := clamp(dcmCoords.X, 0, v.DcmData.Cols-1)
-			vY := clamp(dcmCoords.Y, 0, v.DcmData.Rows-1)
-			vZ := clamp(dcmCoords.Z, 0, v.DcmData.Depth-1)
-
-			image[imgWidth*y+x] = v.Data[vZ][vY][vX]
-		}
-	}
-	*sliceFrame.Mpr = Mpr(image, imgWidth, imgHeight, v.DcmData, false)
-}
-
 func GetM(fromSliceToVoxel *math32.Matrix4) []float32 {
 	m := make([]float32, 16)
 	for i := 0; i < 4; i++ {
