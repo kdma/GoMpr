@@ -21,18 +21,7 @@ import (
 	"github.com/g3n/engine/window"
 )
 
-type Rotation int
-
-const (
-	X     Rotation = 0
-	Y              = 1
-	Z              = 2
-	Reset          = 3
-)
-
-type ButtonStrip struct {
-	Rotation Rotation
-}
+type CutCallback func(float32, volume.Volume)
 
 type GuiState struct {
 	Debug         bool
@@ -41,10 +30,12 @@ type GuiState struct {
 	AxialNode     *core.Node
 	CoronalNode   *core.Node
 	SagittallNode *core.Node
+	CustomNode    *core.Node
 	DebugNode     *core.Node
 	Axial         volume.SliceFrame
 	Coronal       volume.SliceFrame
 	Sagittal      volume.SliceFrame
+	Custom        volume.SliceFrame
 }
 
 func updateAxial(g *GuiState, v volume.Volume) {
@@ -60,59 +51,75 @@ func updateCoronal(g *GuiState, v volume.Volume) {
 	g.Coronal.Cut(v)
 }
 
-func placeButtons(scene *core.Node, strip []ButtonStrip, guiState *GuiState, v volume.Volume) {
-	for i, b := range strip {
-		rot := Rotation(i)
-		button := gui.NewButton("Slice" + mapRotation(b.Rotation))
-		label := gui.NewLabel("0")
-		label.SetBgColor(math32.NewColor("darkorange"))
-		button.SetPosition(10, float32(i*30))
-		label.SetPosition(200, float32(i*30))
-		button.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-			if rot == X {
-				guiState.Slice.X += 1
-				updateSagittal(guiState, v)
-				label.SetText(fmt.Sprintf("%f", (guiState.Slice.X)))
-			} else if rot == Y {
-				guiState.Slice.Y += 1
-				updateCoronal(guiState, v)
-				label.SetText(fmt.Sprintf("%f", (guiState.Slice.Y)))
-			} else if rot == Z {
-				guiState.Slice.Z += 1
-				updateAxial(guiState, v)
-				label.SetText(fmt.Sprintf("%f", (guiState.Slice.Z)))
-			} else {
-				guiState.Slice.X = float32(v.DcmData.Cols) / 2
-				guiState.Slice.Y = float32(v.DcmData.Rows) / 2
-				guiState.Slice.Z = float32(v.DcmData.Depth) / 2
-				updateAxial(guiState, v)
-				updateCoronal(guiState, v)
-				updateSagittal(guiState, v)
-			}
-			guiState.Dirty = true
-		})
-		scene.Add(button)
-		scene.Add(label)
-	}
+func updateFree(g *GuiState, v volume.Volume) {
+	g.Custom = volume.FreeRotation(v, math32.NewMatrix4())
+	g.Custom.Cut(v)
+}
+
+func placeSliderButton(scene *core.Node,
+	x float32,
+	y float32,
+	normalizedValue float32,
+	v volume.Volume,
+	max float32,
+	cb CutCallback) *gui.Slider {
+	s1 := gui.NewHSlider(400, 32)
+	s1.SetPosition(x, y)
+	s1.SetValue(normalizedValue)
+	volumeValue := denorm(s1.Value(), max)
+	s1.SetText(fmt.Sprintf("%1.0f", volumeValue))
+	s1.Subscribe(gui.OnChange, func(evname string, ev interface{}) {
+		denormalized := denorm(s1.Value(), max)
+		s1.SetText(fmt.Sprintf("%1.0f", denormalized))
+		cb(denormalized, v)
+	})
+	scene.Add(s1)
+	return s1
+}
+func norm(v float32, max float32) float32 {
+	return v / max
+}
+func denorm(v float32, max float32) float32 {
+	return v * max
+}
+func placeButtons(scene *core.Node, labels []string, g *GuiState, v volume.Volume) {
+
+	sagBtn := placeSliderButton(scene, 10, 0, norm(g.Slice.Y, float32(v.DcmData.Cols)), v, float32(v.DcmData.Cols), func(f float32, v volume.Volume) {
+		g.Slice.X = f
+		g.Dirty = true
+	})
+
+	cornBtn := placeSliderButton(scene, 10, 30, norm(g.Slice.Y, float32(v.DcmData.Rows)), v, float32(v.DcmData.Rows), func(f float32, v volume.Volume) {
+		g.Slice.Y = f
+		g.Dirty = true
+	})
+
+	axialBtn := placeSliderButton(scene, 10, 60, norm(g.Slice.Z, float32(v.DcmData.Depth)), v, float32(v.DcmData.Depth), func(f float32, v volume.Volume) {
+		g.Slice.Z = f
+		g.Dirty = true
+	})
+
+	resetBtn := gui.NewButton("Reset")
+	resetBtn.SetPosition(10, 90)
+	resetBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		g.Slice.X = float32(v.DcmData.Cols / 2)
+		sagBtn.SetValue(norm(g.Slice.X, float32(v.DcmData.Cols)))
+		g.Slice.Y = float32(v.DcmData.Rows / 2)
+		cornBtn.SetValue(norm(g.Slice.Y, float32(v.DcmData.Rows)))
+		g.Slice.Z = float32(v.DcmData.Depth / 2)
+		axialBtn.SetValue(norm(g.Slice.Z, float32(v.DcmData.Depth)))
+		updateAxial(g, v)
+		updateCoronal(g, v)
+		updateSagittal(g, v)
+	})
+	scene.Add(resetBtn)
+
 	debugBtn := gui.NewCheckBox("dbg")
 	debugBtn.SetPosition(10, float32(150))
 	debugBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		guiState.Debug = !guiState.Debug
+		g.Debug = !g.Debug
 	})
 	scene.Add(debugBtn)
-}
-
-func mapRotation(rotation Rotation) string {
-	if rotation == 0 {
-		return "X"
-	}
-	if rotation == 1 {
-		return "Y"
-	}
-	if rotation == 2 {
-		return "Z"
-	}
-	return "RESET"
 }
 
 func Init(v volume.Volume) {
@@ -130,8 +137,8 @@ func Init(v volume.Volume) {
 		Sagittal:    volume.SliceFrame{},
 	}
 
-	var btns []ButtonStrip
-	btns = append(btns, ButtonStrip{0}, ButtonStrip{1}, ButtonStrip{2}, ButtonStrip{3})
+	var btns []string
+	btns = append(btns, "X", "Y", "Z", "Reset")
 	// Set the scene to be managed by the gui manager
 	gui.Manager().Set(scene)
 	placeButtons(scene, btns, &guiState, v)
@@ -175,11 +182,9 @@ func Init(v volume.Volume) {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 
 		if guiState.Dirty {
-
 			updateAxial(&guiState, v)
 			updateCoronal(&guiState, v)
 			updateSagittal(&guiState, v)
-
 			guiState.AxialNode = Draw(guiState.Axial, v, guiState.AxialNode, math32.NewColor("blue"))
 			guiState.CoronalNode = Draw(guiState.Coronal, v, guiState.CoronalNode, math32.NewColor("green"))
 			guiState.SagittallNode = Draw(guiState.Sagittal, v, guiState.SagittallNode, math32.NewColor("red"))
@@ -296,7 +301,7 @@ func addPlane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 
 	mat1 := material.NewStandard(&math32.Color{1, 1, 1})
 	mat1.AddTexture(tex2)
-	mat1.SetSide(material.SideDouble)
+	mat1.SetSide(material.SideFront)
 	mPlane := graphic.NewMesh(plane, mat1)
 	mPlane.SetMatrix(math32.NewMatrix4().Multiply(s.RotatedFrame.Basis).SetPosition(s.RotatedFrame.Origin))
 	scene.Add(mPlane)
