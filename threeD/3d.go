@@ -116,8 +116,12 @@ func placeButtons(scene *core.Node, labels []string, g *GuiState, v volume.Volum
 
 	debugBtn := gui.NewCheckBox("dbg")
 	debugBtn.SetPosition(10, float32(150))
+	debugBtn.SetValue(g.Debug)
+	debugBtn.SetVisible(true)
+	debugBtn.SetBordersColor(math32.NewColor("black"))
 	debugBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
 		g.Debug = !g.Debug
+		g.Dirty = true
 	})
 	scene.Add(debugBtn)
 }
@@ -147,8 +151,7 @@ func Init(v volume.Volume) {
 	width, height := a.GetSize()
 	aspect := float32(width) / float32(height)
 	cam := camera.New(aspect)
-	cam.SetPosition(0, 0, 1000)
-	cam.SetProjection(camera.Orthographic)
+	cam.SetPosition(60, 100, 300)
 	scene.Add(cam)
 	// Create and add lights to the scene
 	scene.Add(light.NewAmbient(&math32.Color{1.0, 1.0, 1.0}, 0.8))
@@ -294,14 +297,14 @@ func addDots(v []math32.Vector3, scene *core.Node, c *math32.Color, magnify bool
 func addPlane(s volume.SliceFrame, v volume.Volume, scene *core.Node) {
 	w := s.ImageSizeInMm.X
 	h := s.ImageSizeInMm.Y
-	plane := geometry.NewBox(w, h, 1)
+	plane := geometry.NewPlane(w, h)
 	plane.ApplyMatrix(math32.NewMatrix4().MakeTranslation(w/2, h/2, .5))
 
 	tex2 := texture.NewTexture2DFromRGBA(*s.Mpr)
 
 	mat1 := material.NewStandard(&math32.Color{1, 1, 1})
 	mat1.AddTexture(tex2)
-	mat1.SetSide(material.SideFront)
+	mat1.SetSide(material.SideDouble)
 	mPlane := graphic.NewMesh(plane, mat1)
 	mPlane.SetMatrix(math32.NewMatrix4().Multiply(s.RotatedFrame.Basis).SetPosition(s.RotatedFrame.Origin))
 	scene.Add(mPlane)
